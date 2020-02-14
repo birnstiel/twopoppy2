@@ -1,0 +1,8 @@
+name: base
+channels:
+dependencies:
+   - setuptools
+   - numpy
+   - scipy
+   - matplotlib
+   - astropy
