@@ -294,7 +294,7 @@ class Twopoppy():
         
         return [p_L, p_R, q_L, q_R, r_L, r_R]
         
-    def gas_bc(self, x, g, h):
+    def gas_bc(self):
         "Return the dust boundary value parameters"
         
         return [0.0, 0.0, 1.0, 1.0, 1e-100 * x[0], 1e-100 * x[-1]]
@@ -313,7 +313,7 @@ class Twopoppy():
         L = np.zeros(nr)
         v_gas = np.zeros(nr)
     
-        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc(x, g, h))
+        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc())
         
         sig_g = u / x
         sig_g = np.maximum(sig_g, 1e-100)
@@ -333,186 +333,6 @@ class Twopoppy():
         self.v_gas = v_gas
         self.sigma_g = sig_g
             
-            
-def impl_donorcell_adv_diff_delta(x, Diff, v, g, h, K, L, u, dt, pl, pr, ql, qr, rl, rr):
-    """
-    Implicit donor cell advection-diffusion scheme with piecewise constant values
-
-    NOTE: The cell centers can be arbitrarily placed - the interfaces are assumed
-    to be in the middle of the "centers", which makes all interface values
-    just the arithmetic mean of the center values.
-
-        Perform one time step for the following PDE:
-
-           du    d  /    \    d  /              d  /       u   \ \
-           -- + -- | u v | - -- | h(x) Diff(x) -- | g(x) ----  | | = K + L u
-           dt   dx \    /    dx \              dx \      h(x) / /
-
-        with boundary conditions
-
-            dgu/h |            |
-          p ----- |      + q u |       = r
-             dx   |x=xbc       |x=xbc
-
-    Arguments:
-    ----------
-    n_x : int
-        number of grid points
-
-    x : array-like
-        the grid
-
-    Diff : array-like
-        value of Diff @ cell center
-
-    v : array-like
-        the values for v @ interface (array[i] = value @ i-1/2)
-
-    g : array-like
-        the values for g(x)
-
-    h : array-like
-        the values for h(x)
-
-    K : array-like
-        the values for K(x)
-
-    L : array-like
-        the values for L(x)
-
-    u : array-like
-        the current values of u(x)
-
-    dt : float
-        the time step
-
-
-    Output:
-    -------
-
-    u : array-like
-        the updated values of u(x) after timestep dt
-
-    """
-    n_x = len(x)
-    D05 = np.zeros(n_x)
-    h05 = np.zeros(n_x)
-    
-    A = np.zeros(n_x)
-    B = np.zeros(n_x)
-    C = np.zeros(n_x)
-    D = np.zeros(n_x)
-    rhs = np.zeros(n_x)
-    #
-    # calculate the arrays at the interfaces
-    #
-    D05[1:] = 0.5 * (Diff[:-1] + Diff[1:])
-    h05[1:] = 0.5 * (   h[:-1] +    h[1:])
-    #
-    # calculate the entries of the tridiagonal matrix
-    #
-    vol = 0.5 * (x[2:] - x[:-2])
-    A[1:-1] = -dt / vol * (
-        np.maximum(0., v[1:-1]) + 
-        D05[1:-1] * h05[1:-1] * g[:-2] / ((x[1:-1] - x[:-2]) * h[:-2]))
-    B[1:-1] = 1. - dt * L[1:-1] + dt / vol * \
-        (
-        np.maximum(0., v[2:]) -
-        np.minimum(0., v[1:-1]) +
-        D05[2:] * h05[2:] * g[1:-1] / ((x[2:] - x[1:-1]) * h[1:-1]) +
-        D05[1:-1] * h05[1:-1] * g[1:-1] / ((x[1:-1] - x[:-2]) * h[1:-1])
-        )
-    C[1:-1] = dt / vol *  \
-        (
-        np.minimum(0., v[2:]) -
-        D05[2:] * h05[2:] * g[2:] / ((x[2:] - x[1:-1]) * h[2:])
-        )
-    D[1:-1] = -dt * K[1:-1]
-    #
-    # boundary Conditions
-    #
-    A[0] = 0.
-    B[0] = ql - pl * g[0] / (h[0] * (x[1] - x[0]))
-    C[0] = pl * g[1] / (h[1] * (x[1] - x[0]))
-    D[0] = u[0] - rl
-
-    A[-1] = - pr * g[-2] / (h[-2] * (x[-1] - x[-2]))
-    B[-1] = qr + pr * g[-1] / (h[-1] * (x[-1] - x[-2]))
-    C[-1] = 0.
-    D[-1] = u[-1] - rr
-
-    # the delta-way
-    #for i in range(1, n_x - 1):
-    #    rhs[i] = u[i] - D[i] - \
-    #        (A[i] * u[i - 1] + B[i] * u[i] + C[i] * u[i + 1])
-            
-    rhs[1:-1] = u[1:-1] - D[1:-1] - (A[1:-1] * u[:-2] + B[1:-1] * u[1:-1] + C[1:-1] * u[:-2])
-    rhs[0] = rl - (B[0] * u[0] + C[0] * u[1])
-    rhs[-1] = rr - (A[-1] * u[-2] + B[-1] * u[-1])
-
-    # solve for du
-    
-    du = tridag(A, B, C, rhs, n_x)
-
-    return u + du
-    
-    
-def tridag(a, b, c, r, n):
-    """
-    Solves a tridiagnoal matrix equation
-
-        M * u  =  r
-
-    where M is tridiagonal, and u and r are vectors of length n.
-
-    Arguments:
-    ----------
-
-    a : array
-        lower diagonal entries
-
-    b : array
-        diagonal entries
-
-    c : array
-        upper diagonal entries
-
-    r : array
-        right hand side vector
-
-    n : int
-        size of the vectors
-
-    Returns:
-    --------
-
-    u : array
-        solution vector
-    """
-    import numpy as np
-
-    gam = np.zeros(n)
-    u = np.zeros(n)
-
-    if b[0] == 0.:
-        raise ValueError('tridag: rewrite equations')
-
-    bet = b[0]
-
-    u[0] = r[0] / bet
-
-    for j in np.arange(1, n):
-        gam[j] = c[j - 1] / bet
-        bet = b[j] - a[j] * gam[j]
-
-        if bet == 0:
-            raise ValueError('tridag failed')
-        u[j] = (r[j] - a[j] * u[j - 1]) / bet
-
-    for j in np.arange(n - 2, -1, -1):
-        u[j] = u[j] - gam[j + 1] * u[j + 1]
-    return u
-
     def compute_vr_twopoppy(self):
         """
         calculate the velocities of the two populations:
