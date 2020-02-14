@@ -1,6 +1,7 @@
 import numpy as np
 import astropy.constants as c
 import astropy.units as u
+from .fortran import impl_donorcell_adv_diff_delta
 
 M_sun  = c.M_sun.cgs.value
 R_sun  = c.R_sun.cgs.value
@@ -300,7 +301,6 @@ class Twopoppy():
         
     def evolve_gas(self, dt):
         """evolve the gas surface density by time step dt"""
-        from fortran import impl_donorcell_adv_diff_delta as fimpl_donorcell_adv_diff_delta
         nr = self._grid.nr
         x  = self._grid.r
         u  = self.sigma_g * x
@@ -313,7 +313,7 @@ class Twopoppy():
         L = np.zeros(nr)
         v_gas = np.zeros(nr)
     
-        u = fimpl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc(x, g, h))
+        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc(x, g, h))
         
         sig_g = u / x
         sig_g = np.maximum(sig_g, 1e-100)
