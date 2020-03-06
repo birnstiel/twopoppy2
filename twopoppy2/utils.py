@@ -161,11 +161,13 @@ class Widget():
 
         pos = self.axs[0].get_position()
         self.time_slider_ax = self.f.add_axes([pos.x0, 0.05, pos.width, 0.03])
-        self.time_slider = Slider(self.time_slider_ax, 'time', 0, len(m.data['time']), valinit=0, valstep=1, color='turquoise')
+        self.time_slider = Slider(
+            self.time_slider_ax, 'time', 0, len(m.data['time']), valinit=0,
+            valstep=1, color='turquoise', valfmt='%d')
         self.time_slider.on_changed(self.update)
 
     def update(self, val):
-        it = int(self.time_slider.val)
+        it = int(np.floor(self.time_slider.val))
 
         # left plot
 
