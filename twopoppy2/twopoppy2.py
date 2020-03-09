@@ -1,7 +1,15 @@
+from collections import namedtuple
+
 import numpy as np
 
 from .fortran import impl_donorcell_adv_diff_delta, advect, diffuse
 from .constants import M_sun, R_sun, year, sig_h2, m_p, k_b, G
+
+# named tuples to store results of time steps
+
+duststep_result = namedtuple('duststep_result', ['sigma', 'dt', 'flux'])
+gasstep_result  = namedtuple('gasstep_result', ['sigma', 'dt', 'v_gas'])
+size_limits     = namedtuple('size_limits', ['St_0', 'St_1', 'a_1', 'a_dr', 'a_fr', 'a_df', 'mask_drift'])
 
 
 class Grid():
@@ -90,10 +98,10 @@ class Twopoppy():
     R_star = 2.5 * R_sun
     "stellar radius [cm]"
 
-    e_drift = 1
+    e_drift = 1.0
     "drift efficiency [-]"
 
-    e_stick = 1
+    e_stick = 1.0
     "sticking probability [-]"
 
     mu = 0.55
@@ -114,20 +122,29 @@ class Twopoppy():
     f_md = 0.97
     "mass fraction of large grains in the drift limit [-]"
 
-    _floor = 1e-100
+    _floor      = 1e-100
     _dust_floor = _floor
-    _CFL = 0.4
+    _gas_floor  = _floor
+    _CFL        = 0.4
 
     # the attributes belonging to properties
 
-    _a_0 = 1e-5
-    _a_1 = 1e-5
-    _stokesregime = 1
-    _grid = None
-    _cs = None
-    _hp = None
-    _omega = None
-    _no_growth = False
+    _a_0           = 1e-5
+    _a_1           = 1e-5
+    _stokesregime  = 1
+    _grid          = None
+    _cs            = None
+    _hp            = None
+    _omega         = None
+    _do_growth     = True
+    _evolve_gas    = True
+    _rho_mid       = None
+    _Diff          = None
+    _Diff_i        = None
+    _gas_viscosity = None
+    _gamma         = None
+    _v_bar         = None
+    _v_bar_i       = None
 
     def __init__(self, **kwargs):
         for key, value in kwargs.items():
@@ -143,19 +160,31 @@ class Twopoppy():
         This calls all the relevant update functions so that all arrays are set.
         It also initializes the output arrays and sets the time to zero.
         """
-        self.update_omega()
-
         for key in ['T_gas', 'sigma_d', 'sigma_g']:
             if getattr(self, key) is None:
                 raise ValueError(f'"{key}" needs to be set!')
 
-        self.update_cshp()
-        self.evolve_gas(0.0)
+        self.get_omega(update=True)
+        self.get_cs(update=True)
+        self.get_hp(update=True)
+
+        self._v_gas          = np.zeros_like(self.r)
+        self._dust_sources_K = np.zeros_like(self.r)
+        self._dust_sources_L = np.zeros_like(self.r)
+        self._gas_sources_K  = np.zeros_like(self.r)
+        self._gas_sources_L  = np.zeros_like(self.r)
+
+        self.get_rho_mid(update=True)
+        self.get_gas_viscosity(update=True)
+        self.get_gamma(update=True)
+
         self.update_size_limits(0.0)
-        self.update_v_bar()
-        self.update_v_bar_i()
-        self.update_diffusivity()
-        self.update_diffusivity_i()
+
+        self.get_v_bar(update=True)
+        self.get_v_bar_i(update=True)
+        self.get_diffusivity(update=True)
+        self.get_diffusivity_i(update=True)
+
         self._initialize_data()
         self.time = 0.0
         self.snapshots.sort()
@@ -215,6 +244,7 @@ class Twopoppy():
         return self._St_1
 
     def StokesNumber(self, a):
+        "calculate the stokes number of particle size array `a`"
         mfp = self.mu * m_p / (self.rho_mid * sig_h2)
         epstein = np.pi / 2. * a * self.rho_s / self.sigma_g
         stokesI = np.pi * 2. / 9. * a**2. * self.rho_s / (mfp * self.sigma_g)
@@ -247,91 +277,156 @@ class Twopoppy():
             self._stokesregime = value
 
     @property
-    def no_growth(self):
+    def do_growth(self):
         "whether or not particles grow [bool]"
-        return self._no_growth
+        return self._do_growth
 
-    @no_growth.setter
-    def no_growth(self, value):
+    @do_growth.setter
+    def do_growth(self, value):
         if type(value) is not bool:
-            raise ValueError('no_growth must be boolean')
+            raise ValueError('do_growth must be boolean')
         else:
-            self._no_growth = value
+            self._do_growth = value
+
+    @property
+    def evolve_gas(self):
+        "whether or not to evolve the gas surface density [bool]"
+        return self._evolve_gas
+
+    @evolve_gas.setter
+    def evolve_gas(self, value):
+        if type(value) is not bool:
+            raise ValueError('evolve_gas must be boolean')
+        else:
+            self._evolve_gas = value
 
     def set_all_alpha(self, value):
         "helper to set all alphas to the same values"
-        self.alpha_gas = value
-        self.alpha_diff = value
-        self.alpha_turb = value
+        self.alpha_gas = value * np.ones_like(self.r)
+        self.alpha_diff = value * np.ones_like(self.r)
+        self.alpha_turb = value * np.ones_like(self.r)
 
-    def update_omega(self):
-        self._omega = np.sqrt(G * self.M_star / self._grid.r**3)
-
-    @property
-    def omega(self):
+    def get_omega(self, update=False):
         "Keplerian frequency [1/s]"
+        if update:
+            self._omega = np.sqrt(G * self.M_star / self._grid.r**3)
         return self._omega
+    omega = property(get_omega)
 
-    def update_cshp(self):
-        "update sound speed and disk scale height"
-        self._cs = np.sqrt(k_b * self.T_gas / (self.mu * m_p))
-        self._hp = self._cs / self._omega
-
-    def update_diffusivity(self):
-        "updates the cell center diffusion constant"
-        self.Diff = self.alpha_diff * k_b * self.T_gas / self.mu / m_p / self._omega
-
-    def update_diffusivity_i(self):
-        "updates the interface diffusion constant, based on cell centers"
-        self.Diff_i = self._grid.interpolate_at_interfaces(self.Diff)
-
-    @property
-    def cs(self):
-        "isothermal sound speed [cm/s]"
+    def get_cs(self, update=False):
+        "sound speed [cm/s]"
+        if update:
+            self._cs = np.sqrt(k_b * self.T_gas / (self.mu * m_p))
         return self._cs
+    cs = property(get_cs)
 
-    @property
-    def hp(self):
-        "pressure scale height [cm]"
+    def get_hp(self, update=False):
+        "disk scale height [cm]"
+        if update:
+            self._hp = self._cs / self._omega
         return self._hp
+    hp = property(get_hp)
 
-    @property
-    def rho_mid(self):
-        "gas mid-plane density [g/cm^2]"
-        return self.sigma_g / (np.sqrt(2. * np.pi) * self._hp)
+    def get_diffusivity(self, update=False):
+        "the cell center diffusion constant [cm^2/s]"
+        if update:
+            self._Diff = self.alpha_diff * k_b * self.T_gas / self.mu / m_p / self._omega
+        return self._Diff
+    Diff = property(get_diffusivity)
 
-    @property
-    def gas_viscosity(self):
+    def get_diffusivity_i(self, update=False):
+        "the interface diffusion constant, based on cell center interpolation [cm^2/s]"
+        if update:
+            self._Diff_i = self._grid.interpolate_at_interfaces(self.Diff)
+        return self._Diff_i
+    Diff_i = property(get_diffusivity_i)
+
+    def get_dust_sources_K(self, update=True):
+        "dust surface density sources [g / (cm^2 * s)]"
+        if update:
+            self._dust_sources_K = np.zeros_like(self.r)
+        return self._dust_sources_K
+    dust_sources_K = property(get_dust_sources_K)
+
+    def get_dust_sources_L(self, update=True):
+        "implicit dust surface density sources (will be multiplied with sig_d) [1 / s]"
+        if update:
+            self._dust_sources_L = np.zeros_like(self.r)
+        return self._dust_sources_L
+    dust_sources_L = property(get_dust_sources_L)
+
+    def get_gas_sources_K(self, update=True):
+        "gas surface density sources [g / (cm^2 * s)]"
+        if update:
+            self._gas_sources_K = np.zeros_like(self.r)
+        return self._gas_sources_K
+    gas_sources_K = property(get_gas_sources_K)
+
+    def get_gas_sources_L(self, update=True):
+        "implicit gas surface density sources (will be multiplied with sig_g) [1 / s]"
+        if update:
+            self._gas_sources_L = np.zeros_like(self.r)
+        return self._gas_sources_L
+    gas_sources_L = property(get_dust_sources_L)
+
+    def get_rho_mid(self, update=False):
+        "mid-plane gas density [g/cm^2]"
+        if update:
+            self._rho_mid = self.sigma_g / (np.sqrt(2. * np.pi) * self._hp)
+        return self._rho_mid
+    rho_mid = property(get_rho_mid)
+
+    def get_gas_viscosity(self, update=False):
         "gas alpha viscosity [cm^2/s]"
-        return self.alpha_gas * k_b * self.T_gas / self.mu / m_p * np.sqrt(self._grid.r**3 / G / self.M_star)
+        if update:
+            self._nu = self.alpha_gas * k_b * self.T_gas / self.mu / m_p * np.sqrt(self._grid.r**3 / G / self.M_star)
+        return self._nu
+    gas_viscosity = property(get_gas_viscosity)
+
+    def get_gamma(self, update=False):
+        """
+        pressure exponent (not the absolute) [-]
+        """
+        if update:
+            P = self.rho_mid * self.cs**2
+            self._gamma = self._grid.dlnxdlnrc(P)
+        return self._gamma
+    gamma = property(get_gamma)
+
+    def get_v_bar(self, update=False):
+        "v_bar, defined at the cell centers [cm/s]"
+        if update:
+            v_0   = self.v_gas / (1.0 + self.St_0**2)
+            v_1   = self.v_gas / (1.0 + self.St_1**2)
+            v_eta = self.cs**2 / (2 * self.omega * self.r) * self.gamma
+            v_0   = v_0 + 2 / (self.St_0 + 1 / self.St_0) * v_eta
+            v_1   = v_1 + 2 / (self.St_1 + 1 / self.St_1) * v_eta
+
+            # set the mass distribution ratios
+
+            f_m = self.f_mf * np.invert(self.mask_drift) + self.f_md * self.mask_drift
+
+            # calculate the mass weighted transport velocity
+
+            self._v_bar = v_0 * (1.0 - f_m) + v_1 * f_m
+        return self._v_bar
+    v_bar = property(get_v_bar)
+
+    def get_v_bar_i(self, update=False):
+        "v_bar at interfaces from interpolating the current v_bar [cm/s]"
+        if update:
+            self._v_bar_i = self._grid.interpolate_at_interfaces(self.v_bar)
+        return self._v_bar_i
+    v_bar_i = property(get_v_bar_i)
 
     @property
-    def gamma(self):
-        """
-        Calculate the pressure exponent
-        """
-        P = self.rho_mid * self.cs**2
-        return self._grid.dlnxdlnrc(P)
+    def v_gas(self):
+        "the gas radial velocity [cm/s]"
+        return self._v_gas
 
-    def update_v_bar(self):
-        "sets self.v_bar which is defined at the cell centers"
-        v_0   = self.v_gas / (1.0 + self.St_0**2)
-        v_1   = self.v_gas / (1.0 + self.St_1**2)
-        v_eta = self.cs**2 / (2 * self.omega * self.r) * self.gamma
-        v_0   = v_0 + 2 / (self.St_0 + 1 / self.St_0) * v_eta
-        v_1   = v_1 + 2 / (self.St_1 + 1 / self.St_1) * v_eta
-
-        # set the mass distribution ratios
-
-        f_m = self.f_mf * np.invert(self.mask_drift) + self.f_md * self.mask_drift
-
-        # calculate the mass weighted transport velocity
-
-        self.v_bar = v_0 * (1.0 - f_m) + v_1 * f_m
-
-    def update_v_bar_i(self):
-        "calculates self.v_bar_i (at interfaces ) from the current v_bar."
-        self.v_bar_i = self._grid.interpolate_at_interfaces(self.v_bar)
+    @v_gas.setter
+    def v_gas(self, value):
+        self._v_gas = value
 
     def get_dt_adv(self):
         "calculates the advection time step limit"
@@ -346,9 +441,13 @@ class Twopoppy():
     def calculate_size_limits(self, dt):
         """
         Calculates the growth limits. Returns dict with keys
-        - a_1
         - St_0
         - St_1
+        - a_1
+        - a_dr
+        - a_fr
+        - a_df
+        - mask_drift
         """
 
         # set some constants
@@ -365,11 +464,12 @@ class Twopoppy():
 
         # calculate the sizes
 
-        if self.no_growth:
+        if not self.do_growth:
             a_max = self.a_0 * np.ones_like(self.r)
             a_fr  = self.a_0 * np.ones_like(self.r)
             a_dr  = self.a_0 * np.ones_like(self.r)
             a_df  = self.a_0 * np.ones_like(self.r)
+            a_1   = self.a_0 * np.ones_like(self.r)
         else:
             a_fr_ep = self.fudge_fr * 2 * self.sigma_g * self.v_frag**2 / (3 * np.pi * self.alpha_turb * rho_s * self.cs**2)
 
@@ -413,30 +513,29 @@ class Twopoppy():
 
         mask_drift = (a_dr < a_df) & (a_dr < a_fr)
 
-        return {
-            'St_0': St_0,
-            'St_1': St_1,
-            'a_1': a_1,
-            'a_dr': a_dr,
-            'a_fr': a_fr,
-            'a_df': a_df,
-            'mask_drift': mask_drift,
-            }
+        return size_limits(
+            St_0=St_0,
+            St_1=St_1,
+            a_1=a_1,
+            a_dr=a_dr,
+            a_fr=a_fr,
+            a_df=a_df,
+            mask_drift=mask_drift)
 
     def update_size_limits(self, dt):
         """
         Updates the size limits St_0, St_1, a_1
         """
         limits = self.calculate_size_limits(dt)
-        self._St_0 = limits['St_0']
-        self._St_1 = limits['St_1']
-        self._a_1  = limits['a_1']
-        self._a_dr = limits['a_dr']
-        self._a_fr = limits['a_fr']
-        self._a_df = limits['a_df']
-        self.mask_drift = limits['mask_drift']
+        self._St_0 = limits.St_0
+        self._St_1 = limits.St_1
+        self._a_1  = limits.a_1
+        self._a_dr = limits.a_dr
+        self._a_fr = limits.a_fr
+        self._a_df = limits.a_df
+        self.mask_drift = limits.mask_drift
 
-    def dust_bc(self, x, g, h):
+    def dust_bc_zero_d2g_gradient_implicit(self, x, g, h):
         "Return the dust boundary value parameters"
 
         p_L = -(x[1] - x[0]) * h[1] / (x[1] * g[1])
@@ -463,18 +562,25 @@ class Twopoppy():
     def dust_bc_zero_d2g_gradient(self, x, g, u, h):
         return [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]
 
-    def evolve_gas(self, dt):
-        """evolve the gas surface density by time step dt"""
+    def _gas_step_impl(self, dt):
+        """Do an implicit gas time step.
+
+        Returns:
+        --------
+        sigma_g : array
+            the updated gas-density
+
+
+        """
         nr = self._grid.nr
         x  = self._grid.r
         u  = self.sigma_g * x
         D  = 3.0 * np.sqrt(x)
         g  = self.gas_viscosity / np.sqrt(x)
 
-        h = np.ones(nr)
-        # K = sig_dot * x
-        K = np.zeros(nr)
-        L = np.zeros(nr)
+        h     = np.ones(nr)
+        K     = self.gas_sources_K * x
+        L     = self.gas_sources_L * x
         v_gas = np.zeros(nr)
 
         u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc_constmdot(x, g, u, h))
@@ -492,10 +598,9 @@ class Twopoppy():
         v_gas[mask] = u_flux[mask] / u[np.maximum(0, np.where(mask)[0] - 1)]
         v_gas[imask] = u_flux[imask] / u[np.minimum(nr - 1, np.where(imask)[0] + 1)]
 
-        # update values
+        # return values
 
-        self.v_gas = v_gas
-        self.sigma_g = sig_g
+        return gasstep_result(sig_g, dt, v_gas)
 
     def _dust_step_impl(self, dt):
         """Do an implicit dust time step (advection and diffusion).
@@ -537,7 +642,7 @@ class Twopoppy():
         u_flux[1:] = - 0.25 * (D[1:] + D[:-1]) * (h[1:] + h[:-1]) * (
             g[1:] / h[1] * u[1:] - g[:-1] / h[:-1] * u[:-1]) / (x[1:] - x[:-1])
 
-        return sigma_d, dt
+        return duststep_result(sigma_d, dt, u_flux)
 
     def _dust_step_expl(self, t_max=np.inf):
         """Carry out an explicit dust time step (advection and diffusion).
@@ -554,7 +659,7 @@ class Twopoppy():
         sigma_d += diffuse(dt, self.r, self.ri, self.Diff_i, self.sigma_g * self.r, sigma_d * self.r) / self.r
         sigma_d = self._enforce_dust_floor(sigma_d=sigma_d)
 
-        return sigma_d, dt
+        return duststep_result(sigma_d, dt, None)
 
     def _dust_step_implexpl(self, t_max=np.inf):
         """Carry out an explicit dust advection and implicit dust diffusion step.
@@ -584,10 +689,9 @@ class Twopoppy():
         # do the update
 
         u = impl_donorcell_adv_diff_delta(x, D, v, g, h, K, L, u, dt, *self.dust_bc_zero_d2g_gradient(x, g, u, h))
-
         sigma_d = self._enforce_dust_floor(sigma_d=u / x)
 
-        return sigma_d, dt
+        return duststep_result(sigma_d, dt, None)
 
     def _enforce_dust_floor(self, sigma_d=None):
         "limits the dust surface density to the floor value"
@@ -596,15 +700,29 @@ class Twopoppy():
         else:
             return np.maximum(self._dust_floor, sigma_d)
 
-    def dust_step(self, t_max=np.inf):
-        """Twopoppy time step.
-
-        """
+    def time_step(self, t_max=np.inf):
+        """Twopoppy dust time step."""
         dt = min(max(self.time / 200.0, year), t_max - self.time)
 
+        # update whatever is in the update list
+
+        for thing in self.update:
+            thing.fget(self, update=True)
+
+        # update the gas
+        if self.evolve_gas:
+            gas_update = self.sigma_g = self._gas_step_impl(dt)
+            self.sigma_g = gas_update.sigma
+            self.v_gas = gas_update.v_gas
+
+        # update the dust
+
         self.update_size_limits(dt)
-        self.update_v_bar()
-        self.sigma_d = self._dust_step_impl(dt)[0]
+        self.get_v_bar(update=True)
+        self.sigma_d = self._dust_step_impl(dt).sigma
+
+        # update the rest
+
         self.time += dt
 
     def run(self):
@@ -615,9 +733,11 @@ class Twopoppy():
 
             t_next = self.snapshots[i_snap]
             while self.time < t_next:
-                self.dust_step(t_max=t_next)
+                self.time_step(t_max=t_next)
 
             self._update_data()
             print(f'\rRunning ... {i_snap / (len(self.snapshots) - 1) * 100:.1f}%', end='', flush=True)
 
         print('\r------ DONE! ------')
+
+    update = [gamma]
