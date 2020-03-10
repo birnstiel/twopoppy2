@@ -554,7 +554,7 @@ class Twopoppy():
 
     def gas_bc_constmdot(self, x, g, u, h):
         "Return the dust boundary value parameters"
-        return [1.0, 0.0, 0.0, 1.0, g[0] * u[0] / x[0], 1e-100 * x[-1]]
+        return [1.0, 0.0, 0.0, 1.0, 0.5 * g[0] * u[0] / x[0], 1e-100 * x[-1]]
 
     def dust_bc_zerodensity(self, x, g, u, h):
         return [0.0, 0.0, 1.0, 1.0, 1e-100 * x[0], 1e-100 * x[-1]]
