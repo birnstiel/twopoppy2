@@ -3,7 +3,7 @@ from collections import namedtuple
 import numpy as np
 
 from .fortran import impl_donorcell_adv_diff_delta, advect, diffuse
-from .constants import M_sun, R_sun, year, sig_h2, m_p, k_b, G
+from .constants import M_sun, R_sun, year, sig_h2, m_p, k_b, G, au
 
 # named tuples to store results of time steps
 
@@ -62,7 +62,7 @@ class Twopoppy():
     A new twopoppy implementation
     """
 
-    snapshots = np.logspace(2, np.log10(5e6), 50) * year
+    snapshots = np.hstack((0, np.logspace(2, np.log10(5e6), 50) * year))
     "the times at which to store snapshots"
 
     M_star = M_sun
@@ -147,43 +147,52 @@ class Twopoppy():
     _v_bar_i       = None
 
     def __init__(self, **kwargs):
+        """
+        Object attributes can be passed as keywords. A grid can be passed as
+        object, or will be constructed from the Keywords
+
+        rmin, rmax : floats
+            inner and outer radius [cm]
+
+        nr : int
+            grid size
+        """
         for key, value in kwargs.items():
-            if hasattr(self, key):
-                setattr(self, key, value)
-            elif hasattr(self, '_' + key):
+            if hasattr(self, '_' + key):
                 setattr(self, '_' + key, value)
+            elif hasattr(self, key):
+                setattr(self, key, value)
             else:
                 raise ValueError(f'{key} is not an attribute of twopoppy object')
 
+        if self._grid is None:
+            rmin = kwargs.get('rmin', 0.1 * au)
+            rmax = kwargs.get('rmax', 1000 * au)
+            nr   = kwargs.get('nr', 300)
+            ri   = np.logspace(np.log10(rmin), np.log10(rmax), nr)
+            self._grid = Grid(ri)
+
     def initialize(self):
         """
-        This calls all the relevant update functions so that all arrays are set.
+        This makes sure everything is defined: it will initialize all arrays,
+        check if the necessary arrays are already defined and will call all
+        default update functions so that all arrays are set and up-to-date.
         It also initializes the output arrays and sets the time to zero.
         """
         for key in ['T_gas', 'sigma_d', 'sigma_g']:
             if getattr(self, key) is None:
                 raise ValueError(f'"{key}" needs to be set!')
 
-        self.get_omega(update=True)
-        self.get_cs(update=True)
-        self.get_hp(update=True)
+        # after a first update, we need to calculate v_gas and then recalculate
+        # v_bar, therefore we call update_all twice
 
-        self._v_gas          = np.zeros_like(self.r)
-        self._dust_sources_K = np.zeros_like(self.r)
-        self._dust_sources_L = np.zeros_like(self.r)
-        self._gas_sources_K  = np.zeros_like(self.r)
-        self._gas_sources_L  = np.zeros_like(self.r)
+        self.v_gas = np.zeros_like(self.r)
+        self.update_all()
 
-        self.get_rho_mid(update=True)
-        self.get_gas_viscosity(update=True)
-        self.get_gamma(update=True)
+        self.v_gas = self._gas_step_impl(year).v_gas
+        self.update_all()
 
-        self.update_size_limits(0.0)
-
-        self.get_v_bar(update=True)
-        self.get_v_bar_i(update=True)
-        self.get_diffusivity(update=True)
-        self.get_diffusivity_i(update=True)
+        # initialize the data and snapshots
 
         self._initialize_data()
         self.time = 0.0
@@ -202,6 +211,32 @@ class Twopoppy():
         self.data['a_dr']    = None
         self.data['v_bar']   = None
         self.data['time']    = None
+
+    def update_all(self):
+        """Calls all update functions.
+
+        This will be used in the initialization, but can also be used later
+        to ensure all quantities are up-to-date.
+        """
+        self.get_dust_sources_K(update=True)
+        self.get_dust_sources_L(update=True)
+        self.get_gas_sources_K(update=True)
+        self.get_gas_sources_L(update=True)
+
+        self.get_omega(update=True)
+        self.get_cs(update=True)
+        self.get_hp(update=True)
+
+        self.get_rho_mid(update=True)
+        self.get_gas_viscosity(update=True)
+        self.get_gamma(update=True)
+
+        self.update_size_limits(0.0)
+
+        self.get_v_bar(update=True)
+        self.get_v_bar_i(update=True)
+        self.get_diffusivity(update=True)
+        self.get_diffusivity_i(update=True)
 
     def _update_data(self):
         "update the evolution data arrays"
@@ -379,7 +414,7 @@ class Twopoppy():
     def get_gas_viscosity(self, update=False):
         "gas alpha viscosity [cm^2/s]"
         if update:
-            self._nu = self.alpha_gas * k_b * self.T_gas / self.mu / m_p * np.sqrt(self._grid.r**3 / G / self.M_star)
+            self._nu = self.alpha_gas * self.cs * self.hp
         return self._nu
     gas_viscosity = property(get_gas_viscosity)
 
@@ -549,18 +584,25 @@ class Twopoppy():
         return [p_L, p_R, q_L, q_R, r_L, r_R]
 
     def gas_bc_zerotorque(self, x, g, u, h):
-        "Return the dust boundary value parameters"
+        "Return the gas boundary value parameters"
         return [0.0, 0.0, 1.0, 1.0, 1e-100 * x[0], 1e-100 * x[-1]]
+
+    def gas_bc_zerogradient_impl(self, x, g, u, h):
+        """gas boundary condition as in dustpy"""
+        p_L = -(x[1] - x[0]) * h[1] / (x[1] * g[1])
+        q_L = 1. / x[0] - 1. / x[1] * g[0] / g[1] * h[1] / h[0]
+        r_L = 0.0
+        return p_L, 0.0, q_L, 1.0, r_L, 1e-100 * x[-1]
 
     def gas_bc_constmdot(self, x, g, u, h):
-        "Return the dust boundary value parameters"
-        return [1.0, 0.0, 0.0, 1.0, 0.5 * g[0] * u[0] / x[0], 1e-100 * x[-1]]
+        "Return the gas boundary value parameters"
+        return 1.0, 0.0, 0.0, 1.0, 0.5 * g[0] * u[0] / x[0], 1e-100 * x[-1]
 
     def dust_bc_zerodensity(self, x, g, u, h):
-        return [0.0, 0.0, 1.0, 1.0, 1e-100 * x[0], 1e-100 * x[-1]]
+        return 0.0, 0.0, 1.0, 1.0, 1e-100 * x[0], 1e-100 * x[-1]
 
     def dust_bc_zero_d2g_gradient(self, x, g, u, h):
-        return [1.0, 1.0, 0.0, 0.0, 0.0, 0.0]
+        return 1.0, 1.0, 0.0, 0.0, 0.0, 0.0
 
     def _gas_step_impl(self, dt):
         """Do an implicit gas time step.
@@ -583,7 +625,7 @@ class Twopoppy():
         L     = self.gas_sources_L * x
         v_gas = np.zeros(nr)
 
-        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc_constmdot(x, g, u, h))
+        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc_zerogradient_impl(x, g, u, h))
 
         sig_g = u / x
         sig_g = np.maximum(sig_g, 1e-100)
@@ -711,7 +753,7 @@ class Twopoppy():
 
         # update the gas
         if self.evolve_gas:
-            gas_update = self.sigma_g = self._gas_step_impl(dt)
+            gas_update = self._gas_step_impl(dt)
             self.sigma_g = gas_update.sigma
             self.v_gas = gas_update.v_gas
 

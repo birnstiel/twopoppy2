@@ -128,6 +128,97 @@ def solution_youdinshu2002(r, sig0, t, A, d):
     return r**(-d - 1) * ri**(d + 1) * sig_i
 
 
+def lbp_solution(R, gamma, nu1, mstar, mdisk, RC0, time=0):
+    """
+    Calculate Lynden-Bell & Pringle self similar solution.
+    All values need to be either given with astropy-units, or
+    in as pure float arrays in cgs units.
+
+    Arguments:
+    ----------
+
+    R : array
+        radius array
+
+    gamma : float
+        viscosity exponent
+
+    nu1 : float
+        viscosity at R[0]
+
+    mstar : float
+        stellar mass
+
+    mdisk : float
+        disk mass at t=0
+
+    RC0 : float
+        critical radius at t=0
+
+    Keywords:
+    ---------
+
+    time : float
+        physical "age" of the analytical solution
+
+    Output:
+    -------
+    sig_g,RC(t)
+
+    sig_g : array
+        gas surface density, with or without unit, depending on input
+
+    RC : the critical radius
+
+    """
+    import astropy.units as u
+    import numpy as np
+
+    # assume cgs if no units are given
+
+    units = True
+    if not hasattr(R, 'unit'):
+        R = R * u.cm
+        units = False
+    if not hasattr(mdisk, 'unit'):
+        mdisk = mdisk * u.g
+    if not hasattr(mstar, 'unit'):
+        mstar = mstar * u.g
+    if not hasattr(nu1, 'unit'):
+        nu1 = nu1 * u.cm**2 / u.s
+    if not hasattr(RC0, 'unit'):
+        RC0 = RC0 * u.cm
+    if time is None:
+        time = 0
+    if not hasattr(time, 'unit'):
+        time = time * u.s
+
+    # convert to variables as in Hartmann paper
+
+    R1 = R[0]
+    r = R / R1
+    ts = 1. / (3 * (2 - gamma)**2) * R1**2 / nu1
+
+    T0 = (RC0 / R1)**(2. - gamma)
+    toff = (T0 - 1) * ts
+
+    T1 = (time + toff) / ts + 1
+    RC1 = T1**(1. / (2. - gamma)) * R1
+
+    # the normalization constant
+
+    C = (-3 * mdisk * nu1 * T0**(1. / (4. - 2. * gamma)) * (-2 + gamma)) / 2. / R1**2
+
+    # calculate the surface density
+
+    sig_g = C / (3 * np.pi * nu1 * r**gamma) * T1**(-(5. / 2. - gamma) / (2. - gamma)) * np.exp(-(r**(2. - gamma)) / T1)
+
+    if units:
+        return sig_g, RC1
+    else:
+        return sig_g.cgs.value, RC1.cgs.value
+
+
 class Widget():
 
     def __init__(self, m):
