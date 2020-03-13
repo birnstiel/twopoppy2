@@ -104,7 +104,7 @@ class Twopoppy():
     e_stick = 1.0
     "sticking probability [-]"
 
-    mu = 0.55
+    mu = 2.3
     "gas mean molecular weight in m_p [m_p]"
 
     time = 0.0
@@ -146,6 +146,9 @@ class Twopoppy():
     _v_bar         = None
     _v_bar_i       = None
 
+    gas_bc = None
+    dust_bc = None
+
     def __init__(self, **kwargs):
         """
         Object attributes can be passed as keywords. A grid can be passed as
@@ -165,12 +168,19 @@ class Twopoppy():
             else:
                 raise ValueError(f'{key} is not an attribute of twopoppy object')
 
+        # set defaults
+
         if self._grid is None:
             rmin = kwargs.get('rmin', 0.1 * au)
             rmax = kwargs.get('rmax', 1000 * au)
             nr   = kwargs.get('nr', 300)
             ri   = np.logspace(np.log10(rmin), np.log10(rmax), nr)
             self._grid = Grid(ri)
+
+        if self.gas_bc is None:
+            self.gas_bc = self.gas_bc_constmdot
+        if self.dust_bc is None:
+            self.dust_bc = self.dust_bc_zero_d2g_gradient
 
     def initialize(self):
         """
@@ -594,6 +604,10 @@ class Twopoppy():
         r_L = 0.0
         return p_L, 0.0, q_L, 1.0, r_L, 1e-100 * x[-1]
 
+    def gas_bc_zerogradient(self, x, g, u, h):
+        """same as default of dustpy"""
+        return 1, 0.0, 0, 1.0, 0, 1e-100 * x[-1]
+
     def gas_bc_constmdot(self, x, g, u, h):
         "Return the gas boundary value parameters"
         return 1.0, 0.0, 0.0, 1.0, 0.5 * g[0] * u[0] / x[0], 1e-100 * x[-1]
@@ -625,7 +639,9 @@ class Twopoppy():
         L     = self.gas_sources_L * x
         v_gas = np.zeros(nr)
 
-        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc_zerogradient_impl(x, g, u, h))
+        #np.savez_compressed('two.npz', x=x, D=D, v_gas=v_gas, g=g, h=h, K=K, L=L, u=u, dt=dt, bc=self.gas_bc(x, g, u, h))
+        #raise ValueError('done')
+        u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc(x, g, u, h))
 
         sig_g = u / x
         sig_g = np.maximum(sig_g, 1e-100)
@@ -673,7 +689,7 @@ class Twopoppy():
 
         # do the update
 
-        u = impl_donorcell_adv_diff_delta(x, D, v, g, h, K, L, u, dt, *self.dust_bc_zero_d2g_gradient(x, g, u, h))
+        u = impl_donorcell_adv_diff_delta(x, D, v, g, h, K, L, u, dt, *self.dust_bc(x, g, u, h))
         # mask = abs(u_dust[2:-1] / u_in[2:-1] - 1) > 0.05
         sigma_d = u / x
         sigma_d = self._enforce_dust_floor(sigma_d=sigma_d)
