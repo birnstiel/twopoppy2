@@ -160,6 +160,16 @@ class Twopoppy():
         nr : int
             grid size
         """
+
+        # set defaults
+
+        if '_grid' not in kwargs and 'grid' not in kwargs:
+            rmin = kwargs.pop('rmin', 0.1 * au)
+            rmax = kwargs.pop('rmax', 1000 * au)
+            nr   = kwargs.pop('nr', 300)
+            ri   = np.logspace(np.log10(rmin), np.log10(rmax), nr)
+            self._grid = Grid(ri)
+
         for key, value in kwargs.items():
             if hasattr(self, '_' + key):
                 setattr(self, '_' + key, value)
@@ -167,15 +177,6 @@ class Twopoppy():
                 setattr(self, key, value)
             else:
                 raise ValueError(f'{key} is not an attribute of twopoppy object')
-
-        # set defaults
-
-        if self._grid is None:
-            rmin = kwargs.get('rmin', 0.1 * au)
-            rmax = kwargs.get('rmax', 1000 * au)
-            nr   = kwargs.get('nr', 300)
-            ri   = np.logspace(np.log10(rmin), np.log10(rmax), nr)
-            self._grid = Grid(ri)
 
         if self.gas_bc is None:
             self.gas_bc = self.gas_bc_constmdot
@@ -639,8 +640,6 @@ class Twopoppy():
         L     = self.gas_sources_L * x
         v_gas = np.zeros(nr)
 
-        #np.savez_compressed('two.npz', x=x, D=D, v_gas=v_gas, g=g, h=h, K=K, L=L, u=u, dt=dt, bc=self.gas_bc(x, g, u, h))
-        #raise ValueError('done')
         u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc(x, g, u, h))
 
         sig_g = u / x
