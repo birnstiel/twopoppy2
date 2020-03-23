@@ -376,7 +376,7 @@ class Twopoppy():
     def get_diffusivity(self, update=False):
         "the cell center diffusion constant [cm^2/s]"
         if update:
-            self._Diff = self.alpha_diff * k_b * self.T_gas / self.mu / m_p / self._omega
+            self._Diff = self.alpha_diff * self.cs * self.hp
         return self._Diff
     Diff = property(get_diffusivity)
 
