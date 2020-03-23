@@ -125,7 +125,9 @@ class Twopoppy():
     _floor      = 1e-100
     _dust_floor = _floor
     _gas_floor  = _floor
+
     _CFL        = 0.4
+    "explicit: CFL number. Implicit: allowed the relative change in the quantity"
 
     # the attributes belonging to properties
 
@@ -760,6 +762,10 @@ class Twopoppy():
     def time_step(self, t_max=np.inf):
         """Twopoppy dust time step."""
         dt = min(max(self.time / 200.0, year), t_max - self.time)
+        # estimate a time step
+        step = self._dust_step_impl(dt)
+        max_change_fact = 10.**np.abs(np.log10(np.where(self.sigma_d > self._dust_floor, self.sigma_d / step.sigma, 1))).max()
+        dt *= (1.0 + self._CFL) / max_change_fact
 
         # update whatever is in the update list
 
@@ -797,4 +803,4 @@ class Twopoppy():
 
         print('\r------ DONE! ------')
 
-    update = [gamma]
+    update = [cs, hp, rho_mid, gamma]
