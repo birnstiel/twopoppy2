@@ -297,3 +297,28 @@ def get_interfaces_from_log_cell_centers(x):
     A = (B + 1) / 2.
     xi = np.append(x / A, x[-1] * B / A)
     return xi
+
+
+def get_interfaces_from_lin_cell_centers(x):
+    """
+    Returns the cell interfaces for an array of linear
+    cell centers.
+
+    Arguments:
+    ----------
+
+    x : array
+    :   Array of logarithmically spaced cell centers for
+        which the interfaces should be calculated
+
+    Output:
+    -------
+
+    xi : array
+    :    Array of length len(x)+1 containing the grid interfaces
+         defined such that 0.5 * (xi[i] + xi[i + 1]) = xi
+    """
+    x  = np.asarray(x)
+    dx = np.diff(x).mean()
+    xi = np.append(x[0] - dx / 2, x + dx / 2)
+    return xi
