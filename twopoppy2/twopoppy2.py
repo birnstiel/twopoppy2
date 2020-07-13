@@ -202,7 +202,8 @@ class Twopoppy():
         self.v_gas = np.zeros_like(self.r)
         self.update_all()
 
-        self.v_gas = self._gas_step_impl(year).v_gas
+        if self.evolve_gas:
+            self.v_gas = self._gas_step_impl(year).v_gas
         self.update_all()
 
         # initialize the data and snapshots
