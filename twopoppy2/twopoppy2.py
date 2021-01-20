@@ -8,8 +8,8 @@ from .constants import M_sun, R_sun, year, sig_h2, m_p, k_b, G, au
 # named tuples to store results of time steps
 
 duststep_result = namedtuple('duststep_result', ['sigma', 'dt', 'flux'])
-gasstep_result  = namedtuple('gasstep_result', ['sigma', 'dt', 'v_gas'])
-size_limits     = namedtuple('size_limits', ['St_0', 'St_1', 'a_1', 'a_dr', 'a_fr', 'a_df', 'mask_drift'])
+gasstep_result = namedtuple('gasstep_result', ['sigma', 'dt', 'v_gas'])
+size_limits = namedtuple('size_limits', ['St_0', 'St_1', 'a_1', 'a_dr', 'a_fr', 'a_df', 'mask_drift'])
 
 
 class Grid():
@@ -122,31 +122,31 @@ class Twopoppy():
     f_md = 0.97
     "mass fraction of large grains in the drift limit [-]"
 
-    _floor      = 1e-100
+    _floor = 1e-100
     _dust_floor = _floor
-    _gas_floor  = _floor
+    _gas_floor = _floor
 
-    _CFL        = 0.4
+    _CFL = 0.4
     "explicit: CFL number. Implicit: allowed the relative change in the quantity"
 
     # the attributes belonging to properties
 
-    _a_0           = 1e-5
-    _a_1           = 1e-5
-    _stokesregime  = 1
-    _grid          = None
-    _cs            = None
-    _hp            = None
-    _omega         = None
-    _do_growth     = True
-    _evolve_gas    = True
-    _rho_mid       = None
-    _Diff          = None
-    _Diff_i        = None
+    _a_0 = 1e-5
+    _a_1 = 1e-5
+    _stokesregime = 1
+    _grid = None
+    _cs = None
+    _hp = None
+    _omega = None
+    _do_growth = True
+    _evolve_gas = True
+    _rho_mid = None
+    _Diff = None
+    _Diff_i = None
     _gas_viscosity = None
-    _gamma         = None
-    _v_bar         = None
-    _v_bar_i       = None
+    _gamma = None
+    _v_bar = None
+    _v_bar_i = None
 
     gas_bc = None
     dust_bc = None
@@ -168,8 +168,8 @@ class Twopoppy():
         if '_grid' not in kwargs and 'grid' not in kwargs:
             rmin = kwargs.pop('rmin', 0.1 * au)
             rmax = kwargs.pop('rmax', 1000 * au)
-            nr   = kwargs.pop('nr', 300)
-            ri   = np.logspace(np.log10(rmin), np.log10(rmax), nr)
+            nr = kwargs.pop('nr', 300)
+            ri = np.logspace(np.log10(rmin), np.log10(rmax), nr)
             self._grid = Grid(ri)
 
         for key, value in kwargs.items():
@@ -218,13 +218,13 @@ class Twopoppy():
         self.data = {}
         self.data['sigma_g'] = None
         self.data['sigma_d'] = None
-        self.data['T_gas']   = None
-        self.data['a_1']     = None
-        self.data['a_df']    = None
-        self.data['a_fr']    = None
-        self.data['a_dr']    = None
-        self.data['v_bar']   = None
-        self.data['time']    = None
+        self.data['T_gas'] = None
+        self.data['a_1'] = None
+        self.data['a_df'] = None
+        self.data['a_fr'] = None
+        self.data['a_dr'] = None
+        self.data['v_bar'] = None
+        self.data['time'] = None
 
     def update_all(self):
         """Calls all update functions.
@@ -445,11 +445,11 @@ class Twopoppy():
     def get_v_bar(self, update=False):
         "v_bar, defined at the cell centers [cm/s]"
         if update:
-            v_0   = self.v_gas / (1.0 + self.St_0**2)
-            v_1   = self.v_gas / (1.0 + self.St_1**2)
+            v_0 = self.v_gas / (1.0 + self.St_0**2)
+            v_1 = self.v_gas / (1.0 + self.St_1**2)
             v_eta = self.cs**2 / (2 * self.omega * self.r) * self.gamma
-            v_0   = v_0 + 2 / (self.St_0 + 1 / self.St_0) * v_eta
-            v_1   = v_1 + 2 / (self.St_1 + 1 / self.St_1) * v_eta
+            v_0 = v_0 + 2 / (self.St_0 + 1 / self.St_0) * v_eta
+            v_1 = v_1 + 2 / (self.St_1 + 1 / self.St_1) * v_eta
 
             # set the mass distribution ratios
 
@@ -506,7 +506,7 @@ class Twopoppy():
 
         # mean free path of the particles
 
-        n     = self.rho_mid / (mu * m_p)
+        n = self.rho_mid / (mu * m_p)
         lambd = 0.5 / (sig_h2 * n)
 
         gamma = np.abs(self.gamma)
@@ -515,10 +515,10 @@ class Twopoppy():
 
         if not self.do_growth:
             a_max = self.a_0 * np.ones_like(self.r)
-            a_fr  = self.a_0 * np.ones_like(self.r)
-            a_dr  = self.a_0 * np.ones_like(self.r)
-            a_df  = self.a_0 * np.ones_like(self.r)
-            a_1   = self.a_0 * np.ones_like(self.r)
+            a_fr = self.a_0 * np.ones_like(self.r)
+            a_dr = self.a_0 * np.ones_like(self.r)
+            a_df = self.a_0 * np.ones_like(self.r)
+            a_1 = self.a_0 * np.ones_like(self.r)
         else:
             a_fr_ep = self.fudge_fr * 2 * self.sigma_g * self.v_frag**2 / (3 * np.pi * self.alpha_turb * rho_s * self.cs**2)
 
@@ -551,7 +551,7 @@ class Twopoppy():
 
             tau_grow = self.sigma_g / np.maximum(1e-100, self.e_stick * self.sigma_d * self.omega)
 
-            a_1 = np.minimum(a_max, self.a_1 * np.exp(np.minimum(709.0, dt / tau_grow)))
+            a_1 = np.minimum(a_max, self.a_1 * np.exp(np.minimum(500.0, dt / tau_grow)))
 
         # calculate the Stokes number of the particles
 
@@ -578,7 +578,7 @@ class Twopoppy():
         limits = self.calculate_size_limits(dt)
         self._St_0 = limits.St_0
         self._St_1 = limits.St_1
-        self._a_1  = limits.a_1
+        self._a_1 = limits.a_1
         self._a_dr = limits.a_dr
         self._a_fr = limits.a_fr
         self._a_df = limits.a_df
@@ -633,14 +633,14 @@ class Twopoppy():
 
         """
         nr = self._grid.nr
-        x  = self._grid.r
-        u  = self.sigma_g * x
-        D  = 3.0 * np.sqrt(x)
-        g  = self.gas_viscosity / np.sqrt(x)
+        x = self._grid.r
+        u = self.sigma_g * x
+        D = 3.0 * np.sqrt(x)
+        g = self.gas_viscosity / np.sqrt(x)
 
-        h     = np.ones(nr)
-        K     = self.gas_sources_K * x
-        L     = self.gas_sources_L * x
+        h = np.ones(nr)
+        K = self.gas_sources_K * x
+        L = self.gas_sources_L * x
         v_gas = np.zeros(nr)
 
         u = impl_donorcell_adv_diff_delta(x, D, v_gas, g, h, K, L, u, dt, *self.gas_bc(x, g, u, h))
@@ -677,7 +677,7 @@ class Twopoppy():
         x = self.r
         v = np.sign(self.v_bar) * np.minimum(self.cs, np.abs(self.v_bar))
         D = self.Diff
-        D[:2]  = 0      # noqa
+        D[:2] = 0      # noqa
         D[-2:] = 0      # noqa
         v[-2:] = 0      # noqa
         #
@@ -735,7 +735,7 @@ class Twopoppy():
         x = self.r
         v = np.zeros_like(x)
         D = self.Diff
-        D[:2]  = 0      # noqa
+        D[:2] = 0      # noqa
         D[-2:] = 0      # noqa
         #
         # set up the equation
