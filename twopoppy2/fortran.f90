@@ -80,8 +80,8 @@ subroutine impl_donorcell_adv_diff_delta(n_x, x, Diff, v, g, h, K, L, u, dt, pl,
     C(1) = pl/(x(2) - x(1))
     D(1) = u(1) - rl
 
-    A(n_x) = -pr*g(n_x - 1)/(h(n_x - 1)*(x(n_x) - x(n_x - 1)))
-    B(n_x) = qr + pr*g(n_x)/(h(n_x)*(x(n_x) - x(n_x - 1)))
+    A(n_x) = -pr/(x(n_x) - x(n_x - 1))
+    B(n_x) = qr + pr/(x(n_x) - x(n_x - 1))
     C(n_x) = 0.d0
     D(n_x) = u(n_x) - rr
 
