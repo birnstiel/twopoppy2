@@ -181,7 +181,7 @@ class Twopoppy():
                 raise ValueError(f'{key} is not an attribute of twopoppy object')
 
         if self.gas_bc is None:
-            self.gas_bc = self.gas_bc_zerogradient_impl
+            self.gas_bc = self.gas_bc_constant_gradient
         if self.dust_bc is None:
             self.dust_bc = self.dust_bc_zero_d2g_gradient
 
@@ -608,9 +608,9 @@ class Twopoppy():
         r_L = 0.0
         return p_L, 0.0, q_L, 1.0, r_L, 1e-100 * x[-1]
 
-    def gas_bc_zerogradient(self, x, g, u, h):
+    def gas_bc_constant_gradient(self, x, g, u, h):
         """same as default of dustpy zero gradient in sigma * r"""
-        return 1, 0.0, 0.0, 1.0, 0.0, 1e-100 * x[-1]
+        return 1.0, 0.0, 0.0, 1.0, 0.0, 1e-100 * x[-1]
 
     def gas_bc_constmdot(self, x, g, u, h):
         "Return the gas boundary value parameters"
