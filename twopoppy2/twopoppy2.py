@@ -767,6 +767,7 @@ class Twopoppy():
         step = self._dust_step_impl(dt)
         max_change_fact = 10.**np.abs(np.log10(np.where(self.sigma_d > self._dust_floor, self.sigma_d / step.sigma, 1))).max()
         dt *= (1.0 + self._CFL) / max_change_fact
+        dt = min(dt, t_max - self.time)
 
         # update whatever is in the update list
 
