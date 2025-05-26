@@ -1,0 +1,17 @@
+[build-system]
+build-backend = "mesonpy"
+requires = ["meson-python", "numpy"]
+
+[project]
+name = "twopoppy2"
+version = "1.1.4"
+description = "new implementation of two-population dust evolution model according to Birnstiel, Klahr, Ercolano, A&A (2012)"
+readme = "README.md"
+requires-python = ">=3.7"
+license = { file = "LICENSE" }
+authors = [{ name = "Til Birnstiel", email = "til.birnstiel@lmu.de" }]
+dependencies = ["scipy", "numpy", "matplotlib", "astropy", ]
+
+[project.urls]
+Homepage = "https://github.com/birnstiel/twopoppy2"
+Repository = "https://github.com/birnstiel/twopoppy2"

@@ -2,7 +2,7 @@ from collections import namedtuple
 
 import numpy as np
 
-from .fortran import impl_donorcell_adv_diff_delta, advect, diffuse
+from ._fortran import impl_donorcell_adv_diff_delta, advect, diffuse
 from .constants import M_sun, R_sun, year, sig_h2, m_p, k_b, G, au
 
 # named tuples to store results of time steps
